@@ -9,8 +9,8 @@ app = FastAPI()
 
 # --- CONFIGURACIÓN DE NOTIFICACIONES ---
 # Asegúrate de poner tus códigos AC... y Token reales entre las comillas
-TWILIO_ACCOUNT_SID = 'POR_CONFIGURAR'
-TWILIO_AUTH_TOKEN = 'POR_CONFIGURAR'
+TWILIO_ACCOUNT_SID = os.getenv('AC11a263d0da85ca19f6a08c2e3fc380ba')
+TWILIO_AUTH_TOKEN = os.getenv('98ac76d2a02c29221a536edb8a303ed4')
 TU_NUMERO_PERSONAL = 'whatsapp:+56992797684'  # Tu número guardado
 NUMERO_TWILIO = 'whatsapp:+14155238886'       # Número del Sandbox de Twilio
 # ---------------------------------------
@@ -60,4 +60,5 @@ async def whatsapp_webhook(request: Request):
         
     except Exception as e:
         print(f"❌ Error crítico en el Webhook: {e}")
+
         return Response(content="Error", status_code=500)
