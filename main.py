@@ -1,64 +1,85 @@
-from fastapi import FastAPI, Request
-from fastapi.responses import Response
+import os
+from fastapi import FastAPI, Request, Response
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client
-from ai import get_ai_response
-from db import create_table, save_message
+
+from ai import interpretar_mensaje, transcribir_audio
+from db import init_db, registrar_finanza, registrar_agenda, registrar_nota
 
 app = FastAPI()
 
-# --- CONFIGURACIÓN DE NOTIFICACIONES ---
-# Asegúrate de poner tus códigos AC... y Token reales entre las comillas
-TWILIO_ACCOUNT_SID = os.getenv('AC11a263d0da85ca19f6a08c2e3fc380ba')
-TWILIO_AUTH_TOKEN = os.getenv('98ac76d2a02c29221a536edb8a303ed4')
-TU_NUMERO_PERSONAL = 'whatsapp:+56992797684'  # Tu número guardado
-NUMERO_TWILIO = 'whatsapp:+14155238886'       # Número del Sandbox de Twilio
-# ---------------------------------------
+@app.on_event("startup")
+def startup():
+    init_db()
 
-# Crear tabla al iniciar
-create_table()
+TU_NUMERO = os.getenv("TU_NUMERO_PERSONAL")
 
 @app.post("/whatsapp")
 async def whatsapp_webhook(request: Request):
-    try:
-        # 1. Recibir datos de Twilio
-        form = await request.form()
-        body = form.get("Body", "").strip()
-        phone = form.get("From", "")
+    form = await request.form()
+    from_number = form.get("From", "")
+    body = form.get("Body", "")
+    media_url = form.get("MediaUrl0")
 
-        print(f"📱 Mensaje de {phone}: {body}")
+    twiml = MessagingResponse()
 
-        # 2. Obtener respuesta de ai.py
-        respuesta = get_ai_response(body)
+    # Seguridad
+    if TU_NUMERO and TU_NUMERO not in from_number:
+        twiml.message("⛔ No autorizado.")
+        return Response(content=str(twiml), media_type="application/xml")
 
-        # 3. Guardar en Base de Datos
-        save_message(phone, body, respuesta[:30].replace('\n', ' '))
-
-        # 4. Lógica de Alerta para el Administrador
-        # Si el usuario escribe 4, o palabras clave de ayuda
-        palabras_ayuda = ["4", "persona", "humano", "ayuda"]
-        if any(palabra in body.lower() for palabra in palabras_ayuda):
-            try:
-                client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-                client.messages.create(
-                    from_=NUMERO_TWILIO,
-                    body=f"🚨 *ALERTA:* El cliente {phone} quiere hablar contigo. Mensaje: {body}",
-                    to=TU_NUMERO_PERSONAL
-                )
-                print(f"✅ Notificación enviada con éxito a {TU_NUMERO_PERSONAL}")
-            except Exception as e_notif:
-                print(f"⚠️ Error al enviar notificación: {e_notif}")
-
-        # 5. Responder al cliente
-        twilio_response = MessagingResponse()
-        twilio_response.message(respuesta)
-
-        return Response(
-            content=str(twilio_response),
-            media_type="application/xml"
+    # Obtener texto
+    if media_url:
+        texto = transcribir_audio(
+            media_url,
+            os.getenv("TWILIO_ACCOUNT_SID"),
+            os.getenv("TWILIO_AUTH_TOKEN")
         )
-        
-    except Exception as e:
-        print(f"❌ Error crítico en el Webhook: {e}")
+    else:
+        texto = body
 
-        return Response(content="Error", status_code=500)
+    if not texto:
+        twiml.message("⚠️ No recibí contenido válido.")
+        return Response(content=str(twiml), media_type="application/xml")
+
+    data = interpretar_mensaje(texto)
+    tipo = data.get("tipo")
+    descripcion = data.get("descripcion", texto)
+    monto = data.get("monto")
+    fecha_hora = data.get("fecha_hora", "Pendiente")
+
+    try:
+        if tipo in ["ingreso", "egreso"]:
+            if monto is not None:
+                msg = registrar_finanza(
+                    tipo.upper(),
+                    float(monto),
+                    descripcion
+                )
+                twiml.message(f"💰 {msg}")
+            else:
+                twiml.message(
+                    "❌ No detecté el monto. Ejemplo: 'Gasto 5000 en pan'"
+                )
+
+        elif tipo in ["cita", "recordatorio"]:
+            msg = registrar_agenda(tipo, descripcion, fecha_hora)
+            twiml.message(f"🗓️ {msg}")
+
+        elif tipo == "saludo":
+            twiml.message(
+                "👋 Hola, dime un gasto, ingreso, cita o envíame un audio."
+            )
+
+        else:
+            msg = registrar_nota(descripcion)
+            twiml.message(msg)
+
+    except Exception as e:
+        print("Error general:", e)
+        twiml.message("⚠️ Ocurrió un error. Intenta nuevamente.")
+
+    return Response(content=str(twiml), media_type="application/xml")
+
+@app.get("/")
+def health():
+    return {"status": "Activo"}
