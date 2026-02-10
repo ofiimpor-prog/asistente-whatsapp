@@ -26,8 +26,8 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
 
 def interpretar_mensaje(texto):
     """
-    USO EXCLUSIVO DE GROQ LLAMA 3.3
-    Eliminamos Gemini para evitar el error 404 de Google.
+    IA principal usando Groq Llama 3.3.
+    Ahora reconoce 'consulta' para informes de gastos.
     """
     try:
         completion = groq_client.chat.completions.create(
@@ -35,23 +35,23 @@ def interpretar_mensaje(texto):
             messages=[
                 {
                     "role": "system", 
-                    "content": "Eres un asistente contable. Responde SOLO con un objeto JSON válido. Tipos: ingreso, egreso, cita, recordatorio, nota, saludo."
+                    "content": "Eres un asistente contable profesional. Clasifica el mensaje."
                 },
                 {
                     "role": "user", 
-                    "content": f"Mensaje: '{texto}'. JSON: {{'tipo': '', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}"
+                    "content": f"""Analiza: '{texto}'
+                    Tipos permitidos: ingreso, egreso, cita, recordatorio, nota, saludo, consulta.
+                    
+                    IMPORTANTE: Si el usuario pide un resumen, balance, informe o saber cuánto ha gastado, el tipo es 'consulta'.
+                    
+                    Responde SOLO este formato JSON:
+                    {{'tipo': '', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}"""
                 }
             ],
             response_format={"type": "json_object"}
         )
-        
         return json.loads(completion.choices[0].message.content)
 
     except Exception as e:
-        print(f"❌ Error en Groq: {e}")
-        return {
-            "tipo": "nota",
-            "descripcion": texto,
-            "monto": None,
-            "fecha_hora": None
-        }
+        print(f"Error IA: {e}")
+        return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
