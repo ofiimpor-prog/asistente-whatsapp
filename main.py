@@ -1,41 +1,69 @@
 import os
-from fastapi import FastAPI, Request, Response
+from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
+from database import guardar_registro, obtener_resumen_gastos
 from ia import interpretar_mensaje, transcribir_audio
-from db import init_db, registrar_finanza, registrar_agenda, registrar_nota
 
-app = FastAPI()
-init_db()
+app = Flask(__name__)
 
-TU_NUMERO = os.getenv("TU_NUMERO_PERSONAL")
-
-@app.get("/")
-def home(): return {"status": "OK"}
-
-@app.post("/whatsapp")
-async def whatsapp(request: Request):
-    form = await request.form()
-    from_number = form.get("From", "")
-    body = form.get("Body", "").strip()
-    media_url = form.get("MediaUrl0")
-
-    if TU_NUMERO and TU_NUMERO not in from_number:
-        return Response(content="Prohibido", status_code=403)
-
-    texto = transcribir_audio(media_url, os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN")) if media_url else body
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp():
+    incoming_msg = request.values.get('Body', '').strip()
+    sender_number = request.values.get('From', '')
+    media_url = request.values.get('MediaUrl0')
     
-    data = interpretar_mensaje(texto)
-    tipo = data.get("tipo")
-    monto = data.get("monto")
-    desc = data.get("descripcion", texto)
+    # 1. Manejo de Audio
+    if media_url:
+        twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        twilio_token = os.getenv("TWILIO_AUTH_TOKEN")
+        texto_audio = transcribir_audio(media_url, twilio_sid, twilio_token)
+        if texto_audio:
+            incoming_msg = texto_audio
+        else:
+            res = MessagingResponse()
+            res.message("No pude procesar el audio. ¿Podrías repetirlo?")
+            return str(res)
 
-    # Lógica de respuesta
-    if tipo == "ingreso" and monto: msg = registrar_finanza("INGRESO", monto, desc)
-    elif tipo == "egreso" and monto: msg = registrar_finanza("EGRESO", monto, desc)
-    elif tipo in ["cita", "recordatorio"]: msg = registrar_agenda(tipo, desc, data.get("fecha_hora") or "Pendiente")
-    elif tipo == "saludo": msg = "👋 ¡Hola! ¿Qué quieres registrar hoy?"
-    else: msg = registrar_nota(desc)
+    # 2. IA interpreta la intención
+    datos = interpretar_mensaje(incoming_msg)
+    intent = datos.get("tipo", "nota")
+    
+    response = MessagingResponse()
 
-    twiml = MessagingResponse()
-    twiml.message(msg)
-    return Response(content=str(twiml), media_type="application/xml")
+    # 3. LÓGICA DE INFORMES (Nueva)
+    if intent == "consulta" or "resumen" in incoming_msg.lower() or "informe" in incoming_msg.lower():
+        resumen = obtener_resumen_gastos()
+        # Le enviamos el resumen crudo a la IA para que lo redacte bonito
+        # (Por ahora lo enviamos directo, luego podemos mejorar la redacción)
+        msg_resumen = (
+            f"📊 *INFORME DE FINANZAS*\n\n"
+            f"💰 *Ingresos:* ${resumen['total_ingresos']}\n"
+            f"💸 *Gastos:* ${resumen['total_egresos']}\n"
+            f"📉 *Balance:* ${resumen['balance']}\n\n"
+            f"Últimos movimientos:\n" + resumen['detalles']
+        )
+        response.message(msg_resumen)
+        return str(res)
+
+    # 4. LÓGICA DE REGISTRO (La que ya tenías)
+    guardar_registro(
+        tipo=intent,
+        descripcion=datos.get("descripcion", ""),
+        monto=datos.get("monto"),
+        fecha_hora=datos.get("fecha_hora")
+    )
+
+    # Respuestas personalizadas
+    if intent == "ingreso":
+        response.message(f"💰 *INGRESO* guardado: ${datos['monto']} - {datos['descripcion']}")
+    elif intent == "egreso":
+        response.message(f"💸 *EGRESO* registrado: ${datos['monto']} - {datos['descripcion']}")
+    elif intent == "saludo":
+        response.message("¡Hola Andrés! Soy tu asistente IA. ¿En qué puedo ayudarte hoy?")
+    else:
+        response.message(f"📝 Nota guardada: {incoming_msg}")
+
+    return str(response)
+
+if __name__ == "__main__":
+    app.run(port=10000)
