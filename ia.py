@@ -4,7 +4,6 @@ import requests
 from groq import Groq
 
 # CONFIGURACIÓN
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -27,43 +26,32 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
 
 def interpretar_mensaje(texto):
     """
-    Usamos Groq Llama 3.3 como cerebro principal 
-    porque Google está dando problemas de modelos.
+    USO EXCLUSIVO DE GROQ LLAMA 3.3
+    Eliminamos Gemini para evitar el error 404 de Google.
     """
     try:
-        # Usamos el modelo más nuevo y estable de Groq en 2026
         completion = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
                 {
                     "role": "system", 
-                    "content": "Eres un asistente contable. Responde SOLO con un objeto JSON válido."
+                    "content": "Eres un asistente contable. Responde SOLO con un objeto JSON válido. Tipos: ingreso, egreso, cita, recordatorio, nota, saludo."
                 },
                 {
                     "role": "user", 
-                    "content": f"Clasifica el siguiente mensaje: '{texto}'. \nFormato: {{'tipo': 'ingreso/egreso/cita/recordatorio/nota/saludo', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}"
+                    "content": f"Mensaje: '{texto}'. JSON: {{'tipo': '', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}"
                 }
             ],
             response_format={"type": "json_object"}
         )
         
-        # Extraer y convertir a JSON
-        respuesta = json.loads(completion.choices[0].message.content)
-        return respuesta
+        return json.loads(completion.choices[0].message.content)
 
     except Exception as e:
-        print(f"Error en Groq: {e}")
-        # Si Groq falla, intentamos una última vez con Gemini (como respaldo)
-        return interpretar_con_gemini_fallback(texto)
-
-def interpretar_con_gemini_fallback(texto):
-    """Respaldo final en caso de que Groq falle"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": f"Responde solo JSON: {{'tipo': 'nota', 'descripcion': '{texto}', 'monto': null, 'fecha_hora': ''}}"}]}]}
-    try:
-        response = requests.post(url, json=payload, timeout=5)
-        raw = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        inicio, fin = raw.find("{"), raw.rfind("}") + 1
-        return json.loads(raw[inicio:fin])
-    except:
-        return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
+        print(f"❌ Error en Groq: {e}")
+        return {
+            "tipo": "nota",
+            "descripcion": texto,
+            "monto": None,
+            "fecha_hora": None
+        }
