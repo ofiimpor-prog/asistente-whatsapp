@@ -1,7 +1,6 @@
 fastapi
 uvicorn
-python-multipart
 twilio
 requests
 groq
-google-genai
+python-multipart
