@@ -38,10 +38,11 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
                 response_format="text"
             )
 
+        # Manejo flexible del retorno de Groq
         return resultado.strip() if isinstance(resultado, str) else resultado.text
 
     except Exception as e:
-        print("❌ Error transcripción Groq:", e)
+        print(f"❌ Error transcripción Groq: {e}")
         return None
 
     finally:
@@ -49,72 +50,67 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
             os.remove(temp_file)
 
 # ======================
-# TEXTO → INTENCIÓN (Gemini PRO estable)
+# TEXTO → INTENCIÓN (Gemini 1.5 Flash Estable)
 # ======================
 
 def interpretar_mensaje(texto):
-    url = (
-        "https://generativelanguage.googleapis.com/v1/"
-        f"models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
-    )
-
+    # Usamos v1 (estable) y 1.5-flash (el más moderno y rápido)
+    url = f"[https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=](https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=){GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
 
     prompt = f"""
-Devuelve SOLO un JSON válido.
-NO agregues texto adicional.
+Actúa como un extractor de datos profesional. 
+Analiza el mensaje y devuelve ÚNICAMENTE un objeto JSON válido.
+Tipos: ingreso, egreso, cita, recordatorio, nota, saludo.
 
-Tipos permitidos:
-ingreso, egreso, cita, recordatorio, nota, saludo
+Mensaje: "{texto}"
 
-Formato EXACTO:
+Formato JSON:
 {{
   "tipo": "",
   "descripcion": "",
   "monto": null,
   "fecha_hora": null
 }}
-
-Mensaje:
-"{texto}"
 """
 
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
-                ]
-            }
-        ]
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "topP": 0.95,
+            "responseMimeType": "application/json"
+        }
     }
 
     try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=15
-        )
-
+        response = requests.post(url, headers=headers, json=payload, timeout=15)
         data = response.json()
 
         if "error" in data:
-            print("⚠️ Error Gemini:", data["error"])
-            raise ValueError("Gemini error")
+            print(f"⚠️ Error Gemini API: {data['error']['message']}")
+            raise ValueError(data['error']['message'])
 
+        # Extraer texto y limpiar posibles marcas de Markdown
         raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        
+        # Limpieza de bloques ```json ... ```
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
 
         inicio = raw.find("{")
         fin = raw.rfind("}") + 1
 
         if inicio == -1:
-            raise ValueError("JSON no encontrado")
+            raise ValueError("JSON no encontrado en la respuesta")
 
         return json.loads(raw[inicio:fin])
 
     except Exception as e:
-        print("⚠️ Gemini falló, usando NOTA:", e)
+        print(f"⚠️ Fallo en interpretación: {e}")
+        # Fallback seguro para no perder la información del usuario
         return {
             "tipo": "nota",
             "descripcion": texto,
