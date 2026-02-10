@@ -2,3 +2,5 @@ flask
 twilio
 requests
 groq
+uvicorn
+gunicorn
