@@ -7,9 +7,11 @@ from google import genai
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Inicializar clientes
-# No pasamos parámetros extra para que use la configuración por defecto más estable
-client_gemini = genai.Client(api_key=GEMINI_API_KEY)
+# Inicializar clientes forzando la API v1 (la estable de 2026)
+client_gemini = genai.Client(
+    api_key=GEMINI_API_KEY,
+    http_options={'api_version': 'v1'} 
+)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 def transcribir_audio(url_audio, twilio_sid, twilio_token):
@@ -35,10 +37,10 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
         return None
 
 def interpretar_mensaje(texto):
-    prompt = f"Responde SOLO JSON: {{'tipo': 'ingreso/egreso/cita/recordatorio/nota/saludo', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}. Mensaje: '{texto}'"
+    prompt = f"Analiza y responde SOLO JSON: {{'tipo': 'ingreso/egreso/cita/recordatorio/nota/saludo', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}. Mensaje: '{texto}'"
     
     try:
-        # Usamos el nombre de modelo más genérico posible
+        # Usamos el nombre base del modelo
         response = client_gemini.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt
@@ -54,7 +56,6 @@ def interpretar_mensaje(texto):
         return json.loads(raw[inicio:fin])
 
     except Exception as e:
-        # Esto nos dirá en los logs si el error cambió
         print(f"❌ Error Gemini corregido: {e}")
         return {
             "tipo": "nota",
