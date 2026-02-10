@@ -22,18 +22,42 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
     except Exception: return None
 
 def interpretar_mensaje(texto):
-    # LLAMADA DIRECTA A LA API (Solución al error 404)
+    # Usamos la URL más estable de Google
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {'Content-Type': 'application/json'}
-    prompt = f"Responde SOLO JSON: {{'tipo': 'ingreso/egreso/cita/recordatorio/nota/saludo', 'descripcion': '', 'monto': null, 'fecha_hora': ''}}. Mensaje: '{texto}'"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    
+    # Prompt simplificado al máximo para evitar que la IA se bloquee
+    prompt = (
+        f"Clasifica este mensaje de WhatsApp y responde estrictamente en JSON. "
+        f"Tipos: ingreso, egreso, cita, recordatorio, nota, saludo. "
+        f"Mensaje: '{texto}'. "
+        f"Formato: {{\"tipo\": \"\", \"descripcion\": \"\", \"monto\": null, \"fecha_hora\": \"\"}}"
+    )
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         res_json = response.json()
+        
+        # Validación de seguridad: si no hay respuesta, devolvemos nota
+        if 'candidates' not in res_json or not res_json['candidates']:
+            print("Google no devolvió candidatos:", res_json)
+            return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
+
         raw = res_json['candidates'][0]['content']['parts'][0]['text'].strip()
-        inicio, fin = raw.find("{"), raw.rfind("}") + 1
+        
+        # Limpieza de markdown por si Gemini manda ```json ... ```
+        inicio = raw.find("{")
+        fin = raw.rfind("}") + 1
+        if inicio == -1: return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
+        
         return json.loads(raw[inicio:fin])
+        
     except Exception as e:
-        print("Error Gemini:", e)
+        print(f"Error interpretando: {e}")
         return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
