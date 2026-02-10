@@ -1,54 +1,73 @@
 import os
-from fastapi import FastAPI, Request
-from twilio.twiml.messaging_response import MessagingResponse
-from ia import interpretar_mensaje, transcribir_audio
+import json
+import requests
+from groq import Groq
+from google import genai
 
-app = FastAPI()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+client_gemini = genai.Client(api_key=GEMINI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY)
 
-@app.post("/whatsapp")
-async def whatsapp_webhook(request: Request):
-    form = await request.form()
-    texto = form.get("Body", "").strip()
-    num_media = int(form.get("NumMedia", 0))
+def transcribir_audio(url_audio, twilio_sid, twilio_token):
+    temp_file = "temp_audio.ogg"
+    try:
+        r = requests.get(url_audio, auth=(twilio_sid, twilio_token), timeout=15)
+        if r.status_code == 200:
+            with open(temp_file, "wb") as f:
+                f.write(r.content)
 
-    # 📌 Si viene audio
-    if num_media > 0:
-        media_url = form.get("MediaUrl0")
-        texto = transcribir_audio(media_url, TWILIO_SID, TWILIO_TOKEN)
-        if not texto:
-            return responder("❌ No pude entender el audio")
+            with open(temp_file, "rb") as audio:
+                result = groq_client.audio.transcriptions.create(
+                    file=(temp_file, audio.read()),
+                    model="whisper-large-v3",
+                    response_format="text"
+                )
 
-    # 🧠 Interpretar con IA
-    resultado = interpretar_mensaje(texto)
+            os.remove(temp_file)
+            return result.strip()
+    except Exception as e:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        print("Error audio:", e)
+        return None
 
-    tipo = resultado.get("tipo")
-    descripcion = resultado.get("descripcion", "")
-    monto = resultado.get("monto")
+def interpretar_mensaje(texto):
+    prompt = f"""
+    Analiza el mensaje y responde SOLO JSON.
+    Tipos posibles: ingreso, egreso, cita, recordatorio, nota, saludo.
+    Formato exacto:
+    {{
+      "tipo": "",
+      "descripcion": "",
+      "monto": null,
+      "fecha_hora": ""
+    }}
 
-    # 🗣️ Respuestas dinámicas
-    if tipo == "ingreso":
-        respuesta = f"💰 Ingreso registrado: {descripcion} (${monto})"
-    elif tipo == "egreso":
-        respuesta = f"💸 Gasto registrado: {descripcion} (${monto})"
-    elif tipo == "cita":
-        respuesta = f"📅 Cita registrada: {descripcion}"
-    elif tipo == "recordatorio":
-        respuesta = f"⏰ Recordatorio guardado: {descripcion}"
-    elif tipo == "saludo":
-        respuesta = "👋 Hola, dime qué quieres registrar"
-    else:
-        respuesta = f"📝 Nota guardada: {descripcion}"
+    Mensaje: "{texto}"
+    """
 
-    return responder(respuesta)
+    try:
+        response = client_gemini.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt
+        )
 
-def responder(texto):
-    resp = MessagingResponse()
-    resp.message(texto)
-    return str(resp)
+        raw = response.text.strip()
+        inicio = raw.find("{")
+        fin = raw.rfind("}") + 1
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+        if inicio == -1:
+            raise ValueError("JSON no encontrado")
+
+        return json.loads(raw[inicio:fin])
+
+    except Exception as e:
+        print("Error Gemini:", e)
+        return {
+            "tipo": "nota",
+            "descripcion": texto,
+            "monto": None,
+            "fecha_hora": None
+        }
