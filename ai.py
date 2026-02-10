@@ -2,12 +2,13 @@ import os
 import json
 import requests
 from groq import Groq
-from google import genai # Nueva librería de Google
+from google import genai
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Inicializar clientes
+# Forzamos la configuración para evitar el error de versión v1beta
 client_gemini = genai.Client(api_key=GEMINI_API_KEY)
 groq_client = Groq(api_key=GROQ_API_KEY)
 
@@ -32,23 +33,30 @@ def transcribir_audio(url_audio, twilio_sid, twilio_token):
     return None
 
 def interpretar_mensaje(texto):
-    prompt = f"""
-    Actúa como clasificador de mensajes para un asistente personal.
-    Responde ÚNICAMENTE con un JSON válido. No incluyas explicaciones ni markdown.
+    # Prompt optimizado para evitar que la IA divague
+    prompt = f"""Analiza este mensaje y responde ÚNICAMENTE con un JSON.
     Tipos: 'ingreso', 'egreso', 'cita', 'recordatorio', 'nota', 'saludo'.
-    Formato JSON: {{"tipo": "", "descripcion": "", "monto": null, "fecha_hora": ""}}
-    Mensaje: "{texto}"
-    """
+    Formato: {{"tipo": "", "descripcion": "", "monto": null, "fecha_hora": ""}}
+    Mensaje: "{texto}" """
+    
     try:
-        # Usamos el modelo flash-1.5 que es el más estable y gratuito
+        # Usamos específicamente 'gemini-1.5-flash' sin prefijos extraños
         response = client_gemini.models.generate_content(
             model="gemini-1.5-flash", 
             contents=prompt
         )
+        
         raw = response.text.strip()
+        # Buscamos el JSON dentro de la respuesta por si Gemini agrega ```json ... ```
         inicio = raw.find("{")
         fin = raw.rfind("}") + 1
+        
+        if inicio == -1:
+            raise ValueError("No se encontró JSON")
+            
         return json.loads(raw[inicio:fin])
+        
     except Exception as e:
-        print(f"Error IA corregido: {e}")
+        # Imprimimos el error real en los logs de Render para verlo
+        print(f"Error detectado en Gemini: {e}")
         return {"tipo": "nota", "descripcion": texto, "monto": None, "fecha_hora": None}
