@@ -82,3 +82,8 @@ if __name__ == "__main__":
     # IMPORTANTE: Render usa el puerto que le asigna la variable de entorno PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    # Capturamos el puerto de Render o usamos el 10000 por defecto
+    port = int(os.environ.get("PORT", 10000))
+    # Usamos 0.0.0.0 para que sea visible externamente
+    app.run(host="0.0.0.0", port=port, debug=False)
