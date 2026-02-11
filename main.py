@@ -6,6 +6,11 @@ from ia import interpretar_mensaje, transcribir_audio
 
 app = Flask(__name__)
 
+# Ruta para que Render sepa que el servidor está vivo
+@app.route("/")
+def home():
+    return {"status": "ok", "message": "Servidor funcionando"}
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp():
     incoming_msg = request.values.get('Body', '').strip()
@@ -28,9 +33,8 @@ def whatsapp():
     datos = interpretar_mensaje(incoming_msg)
     intent = datos.get("tipo", "nota")
     
-    # 3. DETECTOR DE INFORMES (Mejorado)
-    # Si el mensaje contiene cualquiera de estas palabras, saltamos directo al informe
-    palabras_informe = ["resumen", "balance", "informe", "gastado", "cuánto", "gastos", "ingresos"]
+    # 3. LÓGICA DE BALANCE / RESUMEN
+    palabras_informe = ["resumen", "balance", "informe", "gastado", "gastos", "ingresos"]
     pide_informe = any(p in incoming_msg.lower() for p in palabras_informe)
 
     if intent == "consulta" or pide_informe:
@@ -44,10 +48,10 @@ def whatsapp():
                 f"*Últimos movimientos:*\n{resumen['detalles']}"
             )
             response.message(msg_resumen)
-            return str(response) 
+            return str(response)
         except Exception as e:
             print(f"Error en resumen: {e}")
-            response.message("Error al calcular el balance. Verifica la base de datos.")
+            response.message("Error al calcular el balance.")
             return str(response)
 
     # 4. LÓGICA DE REGISTRO
@@ -66,7 +70,6 @@ def whatsapp():
         elif intent == "saludo":
             response.message("¡Hola Andrés! Soy tu asistente. Pídeme un 'resumen' o registra un gasto.")
         else:
-            # Si no es ninguna de las anteriores, lo guardamos como nota
             response.message(f"📝 *Nota guardada:* {incoming_msg}")
             
     except Exception as e:
@@ -76,8 +79,6 @@ def whatsapp():
     return str(response)
 
 if __name__ == "__main__":
-    app.run(port=10000)
-if __name__ == "__main__":
-    # Render asigna un puerto dinámico, lo capturamos aquí
+    # IMPORTANTE: Render usa el puerto que le asigna la variable de entorno PORT
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
