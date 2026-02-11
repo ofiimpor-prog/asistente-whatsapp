@@ -28,12 +28,12 @@ def whatsapp():
     datos = interpretar_mensaje(incoming_msg)
     intent = datos.get("tipo", "nota")
     
-    # 3. LÓGICA DE INFORMES
-    # Agregamos una validación extra para que sea más sensible a tu pedido
-    palabras_clave = ["resumen", "balance", "informe", "gastado", "cuánto tengo"]
-    es_consulta = any(palabra in incoming_msg.lower() for palabra in palabras_clave)
+    # 3. DETECTOR DE INFORMES (Mejorado)
+    # Si el mensaje contiene cualquiera de estas palabras, saltamos directo al informe
+    palabras_informe = ["resumen", "balance", "informe", "gastado", "cuánto", "gastos", "ingresos"]
+    pide_informe = any(p in incoming_msg.lower() for p in palabras_informe)
 
-    if intent == "consulta" or es_consulta:
+    if intent == "consulta" or pide_informe:
         try:
             resumen = obtener_resumen_gastos()
             msg_resumen = (
@@ -44,10 +44,10 @@ def whatsapp():
                 f"*Últimos movimientos:*\n{resumen['detalles']}"
             )
             response.message(msg_resumen)
-            return str(response) # <-- AQUÍ ESTABA EL ERROR (decía str(res))
+            return str(response) 
         except Exception as e:
-            print(f"Error generando resumen: {e}")
-            response.message("Tuve un problema al calcular el resumen. ¿Lo intentamos de nuevo?")
+            print(f"Error en resumen: {e}")
+            response.message("Error al calcular el balance. Verifica la base de datos.")
             return str(response)
 
     # 4. LÓGICA DE REGISTRO
@@ -64,13 +64,14 @@ def whatsapp():
         elif intent == "egreso":
             response.message(f"💸 *EGRESO* registrado: ${datos['monto']} - {datos['descripcion']}")
         elif intent == "saludo":
-            response.message("¡Hola Andrés! Soy tu asistente IA con Llama 3.3. ¿Qué registro o informe necesitas?")
+            response.message("¡Hola Andrés! Soy tu asistente. Pídeme un 'resumen' o registra un gasto.")
         else:
+            # Si no es ninguna de las anteriores, lo guardamos como nota
             response.message(f"📝 *Nota guardada:* {incoming_msg}")
             
     except Exception as e:
         print(f"Error al guardar: {e}")
-        response.message("No pude guardar el registro, pero lo anotaré como una nota temporal.")
+        response.message("Lo siento, no pude procesar ese mensaje.")
 
     return str(response)
 
