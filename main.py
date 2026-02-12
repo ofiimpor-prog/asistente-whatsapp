@@ -1,29 +1,23 @@
 import os
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
-from database import SessionLocal, Recordatorio, inicializar_db
+from database import SessionLocal, Recordatorio, inicializar_db, Base, engine
 from ia import procesar_mensaje_ia, generar_reporte_automatico
 from datetime import datetime
 from twilio.rest import Client
 
 app = Flask(__name__)
 
-# Iniciar la base de datos de forma segura
+# --- LINEA DE LIMPIEZA TEMPORAL ---
+# Esto borrará las tablas viejas para que se creen de nuevo con la columna 'contenido'
+Base.metadata.drop_all(bind=engine) 
+# ----------------------------------
+
 inicializar_db()
 
 @app.route("/", methods=['GET'])
 def home():
     return "Asistente Operativo", 200
-
-@app.route("/whatsapp", methods=['POST'])
-def whatsapp():
-    msg = request.values.get('Body', '')
-    sender = request.values.get('From', '')
-    media = request.values.get('MediaUrl0') 
-    respuesta = procesar_mensaje_ia(msg, media, sender)
-    resp = MessagingResponse()
-    resp.message(respuesta)
-    return str(resp)
 
 @app.route("/check-reminders", methods=['GET'])
 def check_reminders():
@@ -34,7 +28,6 @@ def check_reminders():
         mi_numero = os.getenv("TU_NUMERO_PERSONAL")
         twilio_number = os.getenv("TWILIO_NUMBER", "whatsapp:+14155238886")
 
-        # Recordatorios
         pendientes = db.query(Recordatorio).filter(
             Recordatorio.estado == "pendiente",
             Recordatorio.fecha_recordatorio <= ahora
@@ -44,15 +37,9 @@ def check_reminders():
             client.messages.create(from_=twilio_number, body=f"⏰ RECORDATORIO: {rec.contenido}", to=rec.usuario)
             rec.estado = "completado"
 
-        # Lógica de Reportes Automáticos (Domingos)
-        if ahora.weekday() == 6 and ahora.hour == 20 and ahora.minute < 10:
-            reporte = generar_reporte_automatico(mi_numero, "semana")
-            client.messages.create(from_=twilio_number, body=f"🗓️ REPORTE SEMANAL AUTOMÁTICO\n{reporte}", to=mi_numero)
-
         db.commit()
         return "OK", 200
     except Exception as e:
-        print(f"Error en check-reminders: {e}")
         return f"Error: {e}", 500
     finally:
         db.close()
