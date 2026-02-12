@@ -1,60 +1,32 @@
-import sqlite3
+import os
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 
-def conectar_db():
-    # Creamos la conexión a la base de datos local
-    conn = sqlite3.connect("asistente.db")
-    cursor = conn.cursor()
-    # Creamos la tabla si no existe
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS registros (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tipo TEXT,
-            descripcion TEXT,
-            monto REAL,
-            fecha_hora TEXT
-        )
-    """)
-    conn.commit()
-    return conn
+# En Render, crea una Database PostgreSQL y pega el Internal Database URL en tus env vars
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///test.db")
 
-def guardar_registro(tipo, descripcion, monto, fecha_hora):
-    """Esta es la función que main.py no encontraba"""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO registros (tipo, descripcion, monto, fecha_hora) VALUES (?, ?, ?, ?)",
-        (tipo, descripcion, monto, fecha_hora)
-    )
-    conn.commit()
-    conn.close()
+Base = declarative_base()
 
-def obtener_resumen_gastos():
-    """Esta función genera los totales para el informe"""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    
-    # Sumar ingresos y egresos
-    cursor.execute("SELECT tipo, SUM(monto) FROM registros WHERE monto IS NOT NULL GROUP BY tipo")
-    totales = dict(cursor.fetchall())
-    
-    # Obtener los últimos 5 movimientos
-    cursor.execute("SELECT tipo, descripcion, monto FROM registros ORDER BY id DESC LIMIT 5")
-    filas = cursor.fetchall()
-    
-    conn.close()
-    
-    ingresos = totales.get('ingreso', 0)
-    egresos = totales.get('egreso', 0)
-    
-    detalles = ""
-    for f in filas:
-        emoji = "💰" if f[0] == "ingreso" else "💸"
-        monto_formateado = f"{f[2]:,.0f}".replace(",", ".") # Formato chileno opcional
-        detalles += f"{emoji} {f[1]}: ${monto_formateado}\n"
-        
-    return {
-        "total_ingresos": ingresos,
-        "total_egresos": egresos,
-        "balance": ingresos - egresos,
-        "detalles": detalles if detalles else "No hay movimientos registrados."
-    }
+class Transaccion(Base):
+    __tablename__ = 'transacciones'
+    id = Column(Integer, primary_key=True)
+    usuario = Column(String)
+    tipo = Column(String) # ingreso o egreso
+    monto = Column(Float)
+    descripcion = Column(String)
+    fecha = Column(DateTime, default=datetime.utcnow)
+
+class Recordatorio(Base):
+    __tablename__ = 'recordatorios'
+    id = Column(Integer, primary_key=True)
+    usuario = Column(String)
+    evento = Column(String)
+    fecha_hora = Column(DateTime)
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def inicializar_db():
+    Base.metadata.create_all(bind=engine)
