@@ -25,13 +25,18 @@ def procesar_mensaje_ia(texto, media_url, usuario):
                 texto_final = transcription
         except: return "Error procesando el audio."
 
+    # Prompt con fecha de referencia actual
+    ahora_ref = datetime.now()
     prompt_sistema = f"""
-    Eres un asistente contable pro. Hoy es {datetime.now().strftime('%Y-%m-%d %H:%M')}.
+    Eres un asistente contable y de agenda pro. Hoy es {ahora_ref.strftime('%Y-%m-%d %H:%M')}.
+    
     Responde UNICAMENTE un JSON:
     - Finanzas: {{"tipo": "finanzas", "accion": "ingreso|egreso", "monto": float, "descripcion": "str"}}
     - Resumen: {{"tipo": "resumen", "periodo": "dia|mes|semana"}}
     - Agenda: {{"tipo": "agenda", "evento": "str", "fecha": "YYYY-MM-DD HH:MM"}}
     - Saludo: {{"tipo": "charla", "mensaje": "str"}}
+
+    IMPORTANTE: Si el usuario agenda para 'mañana' o 'el sábado', calcula la fecha real basada en hoy.
     """
     try:
         completion = groq_client.chat.completions.create(
@@ -39,48 +44,47 @@ def procesar_mensaje_ia(texto, media_url, usuario):
             model="llama-3.3-70b-versatile", response_format={"type": "json_object"}
         )
         datos = json.loads(completion.choices[0].message.content)
-        if datos.get("tipo") == "charla": return "¡Hola! Soy tu asistente. Puedo anotar gastos, ingresos y recordatorios."
+        if datos.get("tipo") == "charla": return "¡Hola! Hecho, puedo anotar tus finanzas y también tus citas."
         return ejecutar_accion(datos, usuario)
     except Exception as e: return f"Error de IA: {str(e)}"
 
 def ejecutar_accion(datos, usuario):
     db = SessionLocal()
+    # Número fijo para recordatorios según tu instrucción
+    NUMERO_DESTINO_CITAS = "whatsapp:+56962959718"
+    
     try:
         if datos.get('tipo') == 'finanzas':
             nueva = Transaccion(usuario=usuario, tipo=datos['accion'], monto=datos['monto'], descripcion=datos['descripcion'])
             db.add(nueva)
             db.commit()
-            return f"✅ {datos['accion'].capitalize()} de ${datos['monto']} guardado por '{datos['descripcion']}'."
+            return f"✅ {datos['accion'].capitalize()} de ${datos['monto']} guardado."
+            
         elif datos.get('tipo') == 'resumen':
             return generar_reporte_automatico(usuario, datos['periodo'])
+            
         elif datos.get('tipo') == 'agenda':
-            nueva_cita = Recordatorio(usuario=usuario, contenido=datos['evento'], fecha_recordatorio=datetime.strptime(datos['fecha'], '%Y-%m-%d %H:%M'))
+            fecha_dt = datetime.strptime(datos['fecha'], '%Y-%m-%d %H:%M')
+            nueva_cita = Recordatorio(
+                usuario=NUMERO_DESTINO_CITAS, 
+                contenido=datos['evento'], 
+                fecha_recordatorio=fecha_dt,
+                estado="pendiente"
+            )
             db.add(nueva_cita)
             db.commit()
-            return f"📅 Cita agendada: {datos['evento']} para el {datos['fecha']}."
+            return f"📅 Agendado: *{datos['evento']}* para el {datos['fecha']}. Se avisará al número configurado."
     finally: db.close()
     return "OK"
 
 def generar_reporte_automatico(usuario, periodo):
     db = SessionLocal()
     ahora = datetime.now()
-    if periodo == 'mes':
-        inicio = ahora.replace(day=1, hour=0, minute=0)
-        txt = "del mes"
-    elif periodo == 'semana':
-        inicio = ahora - timedelta(days=7)
-        txt = "de los últimos 7 días"
-    else:
-        inicio = ahora.replace(hour=0, minute=0)
-        txt = "de hoy"
+    if periodo == 'mes': inicio = ahora.replace(day=1, hour=0, minute=0)
+    elif periodo == 'semana': inicio = ahora - timedelta(days=7)
+    else: inicio = ahora.replace(hour=0, minute=0)
 
     egresos = db.query(func.sum(Transaccion.monto)).filter(Transaccion.usuario == usuario, Transaccion.tipo == 'egreso', Transaccion.fecha >= inicio).scalar() or 0
     ingresos = db.query(func.sum(Transaccion.monto)).filter(Transaccion.usuario == usuario, Transaccion.tipo == 'ingreso', Transaccion.fecha >= inicio).scalar() or 0
-    
-    top_gastos = db.query(Transaccion).filter(Transaccion.usuario == usuario, Transaccion.tipo == 'egreso', Transaccion.fecha >= inicio).order_by(Transaccion.monto.desc()).limit(3).all()
-    detalle = ""
-    if top_gastos:
-        detalle = "\n\n🔝 Gastos mayores:\n" + "\n".join([f"• {g.descripcion}: ${g.monto}" for g in top_gastos])
-    
     db.close()
-    return f"📊 Balance {txt}:\n💰 Ingresos: ${ingresos}\n💸 Gastos: ${egresos}\n⚖️ Neto: ${ingresos - egresos}{detalle}"
+    return f"📊 Balance:\n💰 Ingresos: ${ingresos}\n💸 Gastos: ${egresos}\n⚖️ Neto: ${ingresos - egresos}"
