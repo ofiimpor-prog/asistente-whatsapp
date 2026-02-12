@@ -1,6 +1,7 @@
 flask
 twilio
-requests
-groq
-uvicorn
+openai
+python-dotenv
+sqlalchemy
+psycopg2-binary
 gunicorn
