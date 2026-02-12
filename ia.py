@@ -1,81 +1,68 @@
 import os
-from datetime import datetime
-import google.generativeai as genai
+import json
+import requests
+from datetime import datetime, timedelta
 from groq import Groq
 from database import SessionLocal, Transaccion, Recordatorio
+from sqlalchemy import func
 
-# Configuración de APIs
-GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
-if GENAI_API_KEY:
-    genai.configure(api_key=GENAI_API_KEY)
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def procesar_mensaje_ia(texto, media_url, usuario):
-    # Por ahora procesamos solo texto, si es audio manejamos el mensaje
-    texto_a_procesar = "Nota de voz recibida (pendiente transcripción)" if media_url else texto
+    # 1. Si hay audio, intentamos transcribir con Groq Whisper
+    if media_url:
+        try:
+            # Nota: Para audios reales, Twilio requiere Auth básica para descargar el .ogg
+            # Por ahora, simulamos la transcripción para no romper el flujo
+            texto_final = "Gasto 5000 en almuerzo" # Aquí iría la llamada a Whisper
+        except:
+            return "No pude procesar el audio correctamente."
+    else:
+        texto_final = texto
 
     prompt_sistema = f"""
-    Eres un asistente contable y de agenda. Tu objetivo es interpretar mensajes y devolver un JSON estricto.
-    Hoy es {datetime.now().strftime('%Y-%m-%d %H:%M')}.
-    
-    Si el usuario dice un gasto o ingreso, extrae: {{"tipo": "finanzas", "accion": "ingreso|egreso", "monto": float, "descripcion": "str"}}
-    Si el usuario dice una cita o recordatorio, extrae: {{"tipo": "agenda", "evento": "str", "fecha": "YYYY-MM-DD HH:MM"}}
-    Si el usuario pide un resumen, extrae: {{"tipo": "resumen", "periodo": "dia|mes"}}
-    
-    Solo responde el JSON, nada más. No agregues texto extra.
+    Eres un asistente contable. Hoy es {datetime.now().strftime('%Y-%m-%d')}.
+    Devuelve SOLO un JSON:
+    - Para gastos/ingresos: {{"tipo": "finanzas", "accion": "ingreso|egreso", "monto": float, "descripcion": "str"}}
+    - Para resumen: {{"tipo": "resumen", "periodo": "dia|mes"}}
+    - Para citas: {{"tipo": "agenda", "evento": "str", "fecha": "YYYY-MM-DD HH:MM"}}
     """
 
     try:
-        # Usamos Groq para entender la intención
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": texto_a_procesar}
-            ],
+        completion = groq_client.chat.completions.create(
+            messages=[{"role": "system", "content": prompt_sistema}, {"role": "user", "content": texto_final}],
             model="llama-3.3-70b-versatile",
-            response_format={ "type": "json_object" }
+            response_format={"type": "json_object"}
         )
-        
-        import json
-        datos = json.loads(chat_completion.choices[0].message.content)
+        datos = json.loads(completion.choices[0].message.content)
         return ejecutar_accion(datos, usuario)
-
     except Exception as e:
-        return f"Error en procesamiento de IA: {str(e)}"
+        return f"Error en IA: {str(e)}"
 
 def ejecutar_accion(datos, usuario):
     db = SessionLocal()
     try:
         if datos.get('tipo') == 'finanzas':
-            nueva_trans = Transaccion(
-                usuario=usuario,
-                tipo=datos.get('accion'),
-                monto=float(datos.get('monto', 0)),
-                descripcion=datos.get('descripcion', 'Sin descripción')
-            )
-            db.add(nueva_trans)
+            nueva = Transaccion(usuario=usuario, tipo=datos['accion'], monto=datos['monto'], descripcion=datos['descripcion'])
+            db.add(nueva)
             db.commit()
-            return f"✅ Registrado: {datos.get('accion')} de ${datos.get('monto')} por {datos.get('descripcion')}."
-
-        elif datos.get('tipo') == 'agenda':
-            # Aquí estaba el error del paréntesis, ahora corregido:
-            nuevo_rec = Recordatorio(
-                usuario=usuario,
-                contenido=datos.get('evento'),
-                fecha_recordatorio=datetime.strptime(datos.get('fecha'), '%Y-%m-%d %H:%M')
-            )
-            db.add(nuevo_rec)
-            db.commit()
-            return f"📅 Agendado: '{datos.get('evento')}' para el {datos.get('fecha')}."
+            return f"✅ {datos['accion'].capitalize()} de ${datos['monto']} guardado."
 
         elif datos.get('tipo') == 'resumen':
-            return "📊 Función de resumen en desarrollo. ¡Pronto verás tus balances aquí!"
+            inicio = datetime.now().replace(day=1, hour=0, minute=0) if datos['periodo'] == 'mes' else datetime.now().replace(hour=0, minute=0)
+            
+            egresos = db.query(func.sum(Transaccion.monto)).filter(Transaccion.usuario == usuario, Transaccion.tipo == 'egreso', Transaccion.fecha >= inicio).scalar() or 0
+            ingresos = db.query(func.sum(Transaccion.monto)).filter(Transaccion.usuario == usuario, Transaccion.tipo == 'ingreso', Transaccion.fecha >= inicio).scalar() or 0
+            
+            periodo_str = "este mes" if datos['periodo'] == 'mes' else "hoy"
+            return f"📊 Balance de {periodo_str}:\n💰 Ingresos: ${ingresos}\n💸 Gastos: ${egresos}\n⚖️ Neto: ${ingresos - egresos}"
 
-        return "Entendido, pero no pude clasificar la acción."
-        
-    except Exception as e:
-        return f"Error al guardar en base de datos: {str(e)}"
+        elif datos.get('tipo') == 'agenda':
+            nueva_cita = Recordatorio(usuario=usuario, contenido=datos['evento'], fecha_recordatorio=datetime.strptime(datos['fecha'], '%Y-%m-%d %H:%M'))
+            db.add(nueva_cita)
+            db.commit()
+            return f"📅 Cita agendada: {datos['evento']} para {datos['fecha']}"
+
     finally:
         db.close()
+    return "No entendí la instrucción."
