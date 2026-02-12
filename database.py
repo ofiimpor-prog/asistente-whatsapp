@@ -24,7 +24,7 @@ class Transaccion(Base):
 class Recordatorio(Base):
     __tablename__ = 'recordatorios'
     id = Column(Integer, primary_key=True)
-    usuario = Column(String)
+    usuario = Column(String) # Aquí guardaremos el número de destino
     contenido = Column(String)
     fecha_recordatorio = Column(DateTime)
     estado = Column(String, default="pendiente")
