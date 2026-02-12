@@ -23,10 +23,10 @@ def procesar_mensaje_ia(texto, media_url, usuario):
                         model="whisper-large-v3", response_format="text"
                     )
                 texto_final = transcription
-        except: return "Error procesando audio."
+        except: return "Error procesando el audio."
 
     prompt_sistema = f"""
-    Eres un asistente contable. Hoy es {datetime.now().strftime('%Y-%m-%d %H:%M')}.
+    Eres un asistente contable pro. Hoy es {datetime.now().strftime('%Y-%m-%d %H:%M')}.
     Responde UNICAMENTE un JSON:
     - Finanzas: {{"tipo": "finanzas", "accion": "ingreso|egreso", "monto": float, "descripcion": "str"}}
     - Resumen: {{"tipo": "resumen", "periodo": "dia|mes|semana"}}
@@ -39,9 +39,9 @@ def procesar_mensaje_ia(texto, media_url, usuario):
             model="llama-3.3-70b-versatile", response_format={"type": "json_object"}
         )
         datos = json.loads(completion.choices[0].message.content)
-        if datos.get("tipo") == "charla": return "¡Hola! ¿En qué puedo ayudarte hoy?"
+        if datos.get("tipo") == "charla": return "¡Hola! Soy tu asistente. Puedo anotar gastos, ingresos y recordatorios."
         return ejecutar_accion(datos, usuario)
-    except Exception as e: return f"Error: {str(e)}"
+    except Exception as e: return f"Error de IA: {str(e)}"
 
 def ejecutar_accion(datos, usuario):
     db = SessionLocal()
@@ -50,14 +50,14 @@ def ejecutar_accion(datos, usuario):
             nueva = Transaccion(usuario=usuario, tipo=datos['accion'], monto=datos['monto'], descripcion=datos['descripcion'])
             db.add(nueva)
             db.commit()
-            return f"✅ {datos['accion'].capitalize()} de ${datos['monto']} guardado."
+            return f"✅ {datos['accion'].capitalize()} de ${datos['monto']} guardado por '{datos['descripcion']}'."
         elif datos.get('tipo') == 'resumen':
             return generar_reporte_automatico(usuario, datos['periodo'])
         elif datos.get('tipo') == 'agenda':
             nueva_cita = Recordatorio(usuario=usuario, contenido=datos['evento'], fecha_recordatorio=datetime.strptime(datos['fecha'], '%Y-%m-%d %H:%M'))
             db.add(nueva_cita)
             db.commit()
-            return f"📅 Cita agendada para {datos['fecha']}."
+            return f"📅 Cita agendada: {datos['evento']} para el {datos['fecha']}."
     finally: db.close()
     return "OK"
 
