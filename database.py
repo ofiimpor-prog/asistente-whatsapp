@@ -4,8 +4,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
-# En Render, crea una Database PostgreSQL y pega el Internal Database URL en tus env vars
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///test.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 Base = declarative_base()
 
@@ -13,19 +14,20 @@ class Transaccion(Base):
     __tablename__ = 'transacciones'
     id = Column(Integer, primary_key=True)
     usuario = Column(String)
-    tipo = Column(String) # ingreso o egreso
+    tipo = Column(String)    # 'ingreso' o 'egreso'
     monto = Column(Float)
     descripcion = Column(String)
-    fecha = Column(DateTime, default=datetime.utcnow)
+    fecha = Column(DateTime, default=datetime.now)
 
 class Recordatorio(Base):
     __tablename__ = 'recordatorios'
     id = Column(Integer, primary_key=True)
     usuario = Column(String)
-    evento = Column(String)
-    fecha_hora = Column(DateTime)
+    contenido = Column(String)
+    fecha_recordatorio = Column(DateTime)
+    estado = Column(String, default="pendiente")
 
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL if DATABASE_URL else "sqlite:///asistente.db")
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def inicializar_db():
