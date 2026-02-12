@@ -1,32 +1,21 @@
 import os
-import re
 from datetime import datetime
 import google.generativeai as genai
 from groq import Groq
 from database import SessionLocal, Transaccion, Recordatorio
 
-# Configuración de APIs desde tus variables de entorno en Render
+# Configuración de APIs
 GENAI_API_KEY = os.getenv("GEMINI_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Inicializar Clientes
-genai.configure(api_key=GENAI_API_KEY)
-groq_client = Groq(api_key=GROQ_API_KEY)
+if GENAI_API_KEY:
+    genai.configure(api_key=GENAI_API_KEY)
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 def procesar_mensaje_ia(texto, media_url, usuario):
-    """
-    Cerebro del asistente: Transcribe audio, analiza texto y guarda en DB.
-    """
-    
-    # 1. Manejo de Notas de Voz (Whisper vía Groq)
-    if media_url:
-        # Aquí se integraría la descarga del audio de Twilio y envío a Groq Whisper
-        # Por ahora, procesamos el texto. Si necesitas el código de descarga de audio, avísame.
-        texto_a_procesar = "[Nota de voz recibida: Procesando transcripción...]"
-    else:
-        texto_a_procesar = texto
+    # Por ahora procesamos solo texto, si es audio manejamos el mensaje
+    texto_a_procesar = "Nota de voz recibida (pendiente transcripción)" if media_url else texto
 
-    # 2. Prompt Maestro para extraer datos estructurados
     prompt_sistema = f"""
     Eres un asistente contable y de agenda. Tu objetivo es interpretar mensajes y devolver un JSON estricto.
     Hoy es {datetime.now().strftime('%Y-%m-%d %H:%M')}.
@@ -35,11 +24,11 @@ def procesar_mensaje_ia(texto, media_url, usuario):
     Si el usuario dice una cita o recordatorio, extrae: {{"tipo": "agenda", "evento": "str", "fecha": "YYYY-MM-DD HH:MM"}}
     Si el usuario pide un resumen, extrae: {{"tipo": "resumen", "periodo": "dia|mes"}}
     
-    Solo responde el JSON, nada más.
+    Solo responde el JSON, nada más. No agregues texto extra.
     """
 
     try:
-        # Usamos Groq Llama 3 para extraer la intención rápidamente
+        # Usamos Groq para entender la intención
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": prompt_sistema},
@@ -49,31 +38,44 @@ def procesar_mensaje_ia(texto, media_url, usuario):
             response_format={ "type": "json_object" }
         )
         
-        datos = eval(chat_completion.choices[0].message.content)
+        import json
+        datos = json.loads(chat_completion.choices[0].message.content)
         return ejecutar_accion(datos, usuario)
 
     except Exception as e:
-        return f"Error al procesar: {str(e)}"
+        return f"Error en procesamiento de IA: {str(e)}"
 
 def ejecutar_accion(datos, usuario):
-    """
-    Guarda la información en la base de datos PostgreSQL de Render.
-    """
     db = SessionLocal()
     try:
-        if datos['tipo'] == 'finanzas':
+        if datos.get('tipo') == 'finanzas':
             nueva_trans = Transaccion(
                 usuario=usuario,
-                tipo=datos['accion'],
-                monto=datos['monto'],
-                descripcion=datos['descripcion']
+                tipo=datos.get('accion'),
+                monto=float(datos.get('monto', 0)),
+                descripcion=datos.get('descripcion', 'Sin descripción')
             )
             db.add(nueva_trans)
             db.commit()
-            return f"✅ Registré un {datos['accion']} de ${datos['monto']} por: {datos['descripcion']}."
+            return f"✅ Registrado: {datos.get('accion')} de ${datos.get('monto')} por {datos.get('descripcion')}."
 
-        elif datos['tipo'] == 'agenda':
+        elif datos.get('tipo') == 'agenda':
+            # Aquí estaba el error del paréntesis, ahora corregido:
             nuevo_rec = Recordatorio(
                 usuario=usuario,
-                contenido=datos['evento'],
-                fecha_recordatorio=datetime.strptime
+                contenido=datos.get('evento'),
+                fecha_recordatorio=datetime.strptime(datos.get('fecha'), '%Y-%m-%d %H:%M')
+            )
+            db.add(nuevo_rec)
+            db.commit()
+            return f"📅 Agendado: '{datos.get('evento')}' para el {datos.get('fecha')}."
+
+        elif datos.get('tipo') == 'resumen':
+            return "📊 Función de resumen en desarrollo. ¡Pronto verás tus balances aquí!"
+
+        return "Entendido, pero no pude clasificar la acción."
+        
+    except Exception as e:
+        return f"Error al guardar en base de datos: {str(e)}"
+    finally:
+        db.close()
